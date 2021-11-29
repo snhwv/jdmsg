@@ -107,7 +107,7 @@ app.listen(port, () => {
 });
 app.use(express.static(path.join(__dirname, "public")));
 
-schedule.scheduleJob("0 */5 * * * ?", function () {
+schedule.scheduleJob("*/15 * * * * ?", function () {
   getMission();
 });
 
@@ -124,6 +124,7 @@ const log = (msg) => {
 const getConfig = () => {
   return globalConfig;
 };
+let mssageSended = false;
 let needResetmsgSended = false;
 const getMission = () => {
   const config = getConfig();
@@ -135,7 +136,18 @@ const getMission = () => {
         headers: { ...headers, Cookie: config?.cookie },
       },
       function (error, response, body) {
-        if (!JSON.parse(body)?.data?.length) {
+        try {
+          if (!JSON.parse(body)?.data?.length) {
+            if (!needResetmsgSended) {
+              sendMsg("请重新设置cookie");
+              needResetmsgSended = true;
+              log(`${new Date().toString()}(needResetmsgSended)}`);
+            } else {
+              resolve(false);
+            }
+            return;
+          }
+        } catch (error) {
           if (!needResetmsgSended) {
             sendMsg("请重新设置cookie");
             needResetmsgSended = true;
@@ -143,6 +155,7 @@ const getMission = () => {
           } else {
             resolve(false);
           }
+          return;
         }
 
         if (!error && response.statusCode == 200) {
@@ -157,7 +170,6 @@ const getMission = () => {
             )}`
           );
           if (todo) {
-            needResetmsgSended = false;
             msgNumber = todo?.children?.reduce((total, current) => {
               total += current?.messageNumber || 0;
               return total;
@@ -170,7 +182,16 @@ const getMission = () => {
             });
           }
           if (msgNumber) {
-            sendMsg("售后客服待办", msgs);
+            if (!mssageSended || needResetmsgSended) {
+              // 客服未处理，(且未推送或刚重置完)
+              needResetmsgSended = false;
+              mssageSended = true;
+              sendMsg("售后客服待办", msgs);
+              log(`${new Date().toString()}(发起推送)}`);
+            }
+          } else {
+            // 客服已经处理了
+            mssageSended = false;
           }
           resolve(true);
         }
