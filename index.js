@@ -64,6 +64,8 @@ app.post("/login", jsonParser, (req, res) => {
   }
   res.json(result);
 });
+let mssageSended = false;
+let needResetmsgSended = false;
 app.post("/change", jsonParser, (req, res) => {
   const fileConfig = getFileConfig();
   const data = req.body;
@@ -89,13 +91,17 @@ app.post("/change", jsonParser, (req, res) => {
 
   if (data.cookie) {
     getMission().then((re) => {
-      res.json({
-        code: 500,
-        msg: "重置cookie失败",
-      });
-      sendMsg(re ? "重置成功" : "重置失败");
-      return;
+      let result = {
+        code: re ? 200 : 500,
+        msg: re ? "重置成功" : "重置失败",
+      };
+      res.json(result);
+      if (re) {
+        mssageSended = false;
+      }
+      sendMsg(result.msg);
     });
+    return;
   }
   res.json({
     code: 200,
@@ -107,7 +113,7 @@ app.listen(port, () => {
 });
 app.use(express.static(path.join(__dirname, "public")));
 
-schedule.scheduleJob("0 */5 * * * ?", function () {
+schedule.scheduleJob("*/15 * * * * ?", function () {
   getMission();
 });
 
@@ -124,7 +130,9 @@ const log = (msg) => {
 const getConfig = () => {
   return globalConfig;
 };
-let needResetmsgSended = false;
+
+const watchList = ["售后客服待办", "厂直待办"];
+
 const getMission = () => {
   const config = getConfig();
   return new Promise((resolve, reject) => {
@@ -135,42 +143,77 @@ const getMission = () => {
         headers: { ...headers, Cookie: config?.cookie },
       },
       function (error, response, body) {
-        if (!JSON.parse(body)?.data?.length) {
+        const fieldHandler = () => {
           if (!needResetmsgSended) {
             sendMsg("请重新设置cookie");
             needResetmsgSended = true;
-            log(`${new Date().toString()}(needResetmsgSended)}`);
-          } else {
-            resolve(false);
+            log(`${new Date().toString()}(请重新设置cookie)}`);
           }
+          resolve(false);
+        };
+        try {
+          if (!JSON.parse(body)?.data?.length) {
+            fieldHandler();
+            return;
+          }
+        } catch (error) {
+          fieldHandler();
+          return;
         }
 
         if (!error && response.statusCode == 200) {
+          needResetmsgSended = false;
           let msgNumber = 0;
           let msgs = [];
-          const todo = JSON.parse(body)?.data?.find(
-            (item) => item?.cateName === "售后客服待办"
+
+          const watched = JSON.parse(body)?.data?.filter((item) =>
+            watchList.includes(item?.cateName)
           );
-          log(
-            `${new Date().toString()}(msgNumber: ${msgNumber}): ${JSON.stringify(
-              todo
-            )}`
-          );
-          if (todo) {
-            needResetmsgSended = false;
-            msgNumber = todo?.children?.reduce((total, current) => {
+
+          const watchedTodoList = watched?.map((item) => {
+            let msgNumber = item?.children?.reduce((total, current) => {
               total += current?.messageNumber || 0;
               return total;
             }, 0);
-            msgs = todo?.children?.map((item) => {
-              return {
-                name: item?.name,
-                value: item?.messageNumber,
-              };
-            });
+            return {
+              name: item?.cateName,
+              msgNumber,
+            };
+          });
+
+          if (watchedTodoList?.length) {
+            msgNumber = watchedTodoList?.reduce((total, current) => {
+              total += current?.msgNumber || 0;
+              return total;
+            }, 0);
           }
+
+          log(`${new Date().toString()}(msgNumber: ${msgNumber})`);
           if (msgNumber) {
-            sendMsg("售后客服待办", msgs);
+            if (!mssageSended) {
+              // 客服未处理，且未推送
+              mssageSended = true;
+              const title = watchedTodoList
+                .filter((item) => item.msgNumber)
+                .map((item) => item.name)
+                .join();
+              let message = "";
+              watched.forEach((watchItem) => {
+                watchItem?.children.map((child) => {
+                  message += `${child?.name}：${child?.messageNumber}\n`;
+                });
+                message += "\n";
+              });
+
+              sendMsg(title, message);
+              log(`${new Date().toString()}(发起推送)}`);
+            }
+          } else {
+            if (mssageSended) {
+              sendMsg("待办已处理");
+            }
+            // 客服已经处理了
+            mssageSended = false;
           }
           resolve(true);
         }
@@ -178,7 +221,7 @@ const getMission = () => {
     );
   });
 };
-const sendMsg = (title, msgs = []) => {
+const sendMsg = (title, msgs = '') => {
   const config = getConfig();
   config.tokenList
     ?.filter((item) => item?.send)
@@ -190,18 +233,11 @@ const sendMsg = (title, msgs = []) => {
       });
     });
 };
-const sendMsgToUser = ({ title, msgs = [], token }) => {
-  let str = "";
-  msgs?.forEach((item) => {
-    str += `${item.name}：${item.value}\n`;
+const sendMsgToUser = ({ title, msgs = '', token }) => {
+  request({
+    url: encodeURI(
+      `http://wx.xtuis.cn/${token}.send?text=${title}&desp=${msgs}`
+    ),
+    method: "get",
   });
-  request(
-    {
-      url: encodeURI(
-        `http://wx.xtuis.cn/${token}.send?text=${title}&desp=${str}`
-      ),
-      method: "get",
-    },
-    function (error, response, body) {}
-  );
 };
