@@ -27,19 +27,19 @@ const setFileConfig = (json) => {
 let globalConfig = getFileConfig();
 
 let headers = {
-  Accept: "*/*",
-  Connection: "keep-alive",
-  Cookie: "",
-  "sec-ch-ua":
-    '"Google Chrome";v="95", "Chromium";v="95", ";Not A Brand";v="99"',
-  "sec-ch-ua-mobile": "?0",
-  "sec-ch-ua-platform": '"Windows"',
-  "Sec-Fetch-Dest": "empty",
-  "Sec-Fetch-Mode": "cors",
-  "Sec-Fetch-Site": "same-origin",
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.69 Safari/537.36",
-  "X-Requested-With": "XMLHttpRequest",
+  // Accept: "*/*",
+  // Connection: "keep-alive",
+  // Cookie: "",
+  // "sec-ch-ua":
+  //   '"Google Chrome";v="95", "Chromium";v="95", ";Not A Brand";v="99"',
+  // "sec-ch-ua-mobile": "?0",
+  // "sec-ch-ua-platform": '"Windows"',
+  // "Sec-Fetch-Dest": "empty",
+  // "Sec-Fetch-Mode": "cors",
+  // "Sec-Fetch-Site": "same-origin",
+  // "User-Agent":
+  //   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.69 Safari/537.36",
+  // "X-Requested-With": "XMLHttpRequest",
 };
 const info = {
   userName: "manman",
@@ -113,7 +113,7 @@ app.listen(port, () => {
 });
 app.use(express.static(path.join(__dirname, "public")));
 
-schedule.scheduleJob("*/15 * * * * ?", function () {
+schedule.scheduleJob("*/5 * * * * ?", function () {
   getMission();
 });
 
@@ -132,13 +132,26 @@ const getConfig = () => {
 };
 
 const watchList = ["售后客服待办", "厂直待办"];
+const methodName = "jQuery16406568240992967542_1639322265527";
+
+const getMethod = () => {
+  return methodName;
+};
 
 const getMission = () => {
   const config = getConfig();
+  request(
+    {
+      url: `https://vcp.jd.com/getMission`,
+      method: "get",
+      headers: { ...headers, Cookie: config?.cookie },
+    },
+    function (error, response, body) {}
+  );
   return new Promise((resolve, reject) => {
     request(
       {
-        url: `https://vcp.jd.com/getMission`,
+        url: `https://vchebe.jd.com/homePage/queryToBeDoneList?callback=${getMethod()}`,
         method: "get",
         headers: { ...headers, Cookie: config?.cookie },
       },
@@ -151,12 +164,14 @@ const getMission = () => {
           }
           resolve(false);
         };
-        try {
-          if (!JSON.parse(body)?.data?.length) {
-            fieldHandler();
-            return;
-          }
-        } catch (error) {
+        if (typeof body !== "string") {
+          fieldHandler();
+          return;
+        }
+        let data = body?.match?.(
+          /jQuery16406568240992967542_1639322265527\(([\s\S]*)\);/
+        )?.[1];
+        if (!data) {
           fieldHandler();
           return;
         }
@@ -164,22 +179,34 @@ const getMission = () => {
         if (!error && response.statusCode == 200) {
           needResetmsgSended = false;
           let msgNumber = 0;
-          let msgs = [];
 
-          const watched = JSON.parse(body)?.data?.filter((item) =>
-            watchList.includes(item?.cateName)
+          const watched = JSON.parse(data)?.data?.filter((item) =>
+            watchList.includes(item?.name)
           );
 
+          let isValidateData = true;
+
           const watchedTodoList = watched?.map((item) => {
-            let msgNumber = item?.children?.reduce((total, current) => {
-              total += current?.messageNumber || 0;
-              return total;
-            }, 0);
+            let msgNumber = item?.childNeedToDealVos?.reduce(
+              (total, current) => {
+                if (!current.hasOwnProperty("num")) {
+                  isValidateData = false;
+                }
+                total += current?.num || 0;
+                return total;
+              },
+              0
+            );
             return {
-              name: item?.cateName,
+              name: item?.name,
               msgNumber,
             };
           });
+
+          if (!isValidateData) {
+            resolve(false);
+            return;
+          }
 
           if (watchedTodoList?.length) {
             msgNumber = watchedTodoList?.reduce((total, current) => {
@@ -188,7 +215,7 @@ const getMission = () => {
             }, 0);
           }
 
-          log(`${new Date().toString()}(msgNumber: ${msgNumber})`);
+          log(`${new Date().toString()}: msgNumber: ${msgNumber}`);
           if (msgNumber) {
             if (!mssageSended) {
               // 客服未处理，且未推送
@@ -199,18 +226,19 @@ const getMission = () => {
                 .join();
               let message = "";
               watched.forEach((watchItem) => {
-                watchItem?.children.map((child) => {
-                  message += `${child?.name}：${child?.messageNumber}\n`;
+                watchItem?.childNeedToDealVos.map((child) => {
+                  message += `${child?.name}：${child?.num}\n`;
                 });
                 message += "\n";
               });
 
               sendMsg(title, message);
-              log(`${new Date().toString()}(发起推送)}`);
+              log(`${new Date().toString()}(发起推送):${title}`);
             }
           } else {
             if (mssageSended) {
               sendMsg("待办已处理");
+              log(`${new Date().toString()}:待办已处理`);
             }
             // 客服已经处理了
             mssageSended = false;
@@ -221,7 +249,7 @@ const getMission = () => {
     );
   });
 };
-const sendMsg = (title, msgs = '') => {
+const sendMsg = (title, msgs = "") => {
   const config = getConfig();
   config.tokenList
     ?.filter((item) => item?.send)
@@ -233,7 +261,7 @@ const sendMsg = (title, msgs = '') => {
       });
     });
 };
-const sendMsgToUser = ({ title, msgs = '', token }) => {
+const sendMsgToUser = ({ title, msgs = "", token }) => {
   request({
     url: encodeURI(
       `http://wx.xtuis.cn/${token}.send?text=${title}&desp=${msgs}`
