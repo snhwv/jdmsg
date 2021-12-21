@@ -90,17 +90,24 @@ app.post("/change", jsonParser, (req, res) => {
   globalConfig = getFileConfig();
 
   if (data.cookie) {
-    getMission().then((re) => {
-      let result = {
-        code: re ? 200 : 500,
-        msg: re ? "重置成功" : "重置失败",
-      };
-      res.json(result);
-      if (re) {
-        mssageSended = false;
-      }
-      sendMsg(result.msg);
-    });
+    const valid = () => {
+      getMission().then((re) => {
+        if (re === "isValidateData") {
+          valid();
+          return;
+        }
+        let result = {
+          code: re ? 200 : 500,
+          msg: re ? "重置成功" : "重置失败",
+        };
+        res.json(result);
+        if (re) {
+          mssageSended = false;
+        }
+        sendMsg(result.msg);
+      });
+    };
+    valid();
     return;
   }
   res.json({
@@ -204,7 +211,7 @@ const getMission = () => {
           });
 
           if (!isValidateData) {
-            resolve(false);
+            resolve("isValidateData");
             return;
           }
 
